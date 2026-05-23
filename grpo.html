@@ -572,6 +572,12 @@
       background: #f3f5f8;
     }
 
+    .token.prompt-context {
+      flex-basis: 100%;
+      max-width: 100%;
+      font-family: inherit;
+    }
+
     .token.response-token {
       border-color: #9bd2b1;
       background: #eefaf2;
@@ -1158,49 +1164,62 @@ else:
             <h3>old policy 是采样 rollout 时的模型快照</h3>
             <p>它负责生成这条 response，并记录当时每个 token 被采到的概率。</p>
             <div class="prob-stack">
-              <div class="prob-row"><strong>也没关系</strong><span>0.08</span></div>
-              <div class="prob-row"><strong>换新</strong><span>0.10</span></div>
+              <div class="prob-row"><strong>也</strong><span>0.08</span></div>
+              <div class="prob-row"><strong>换</strong><span>0.10</span></div>
             </div>
           </div>
           <div class="response-path-card">
             <h3>同一条序列里，哪些 token 算 loss</h3>
             <div class="token-row" aria-label="token mask 示例">
-              <span class="token prompt-token">[客户问题]</span>
-              <span class="token prompt-token">客服A/B</span>
-              <span class="token prompt-token">输出格式</span>
-              <span class="token response-token">包装不在</span>
-              <span class="token response-token">也没关系</span>
-              <span class="token response-token">换新</span>
-              <span class="token response-token">&lt;answer&gt;[[B]]&lt;/answer&gt;</span>
+              <span class="token prompt-token prompt-context">prompt 条件区：客户问题、客服 A/B、输出格式要求，mask=0</span>
+              <span class="token response-token">包</span>
+              <span class="token response-token">装</span>
+              <span class="token response-token">不</span>
+              <span class="token response-token">在</span>
+              <span class="token response-token">也</span>
+              <span class="token response-token">没</span>
+              <span class="token response-token">关</span>
+              <span class="token response-token">系</span>
+              <span class="token response-token">支</span>
+              <span class="token response-token">持</span>
+              <span class="token response-token">换</span>
+              <span class="token response-token">新</span>
+              <span class="token response-token">B</span>
               <span class="token pad-token">[PAD]</span>
             </div>
-            <div class="formula">response-level A_i = 0.87 广播到每个绿色 response token</div>
+            <div class="formula">response-level A_i = 0.87 广播到每个绿色 response token；真实切分以模型 tokenizer 为准</div>
           </div>
           <div class="policy-card new">
             <span class="tag green">New policy</span>
             <h3>new policy 是当前正在训练、正在反传的模型</h3>
             <p>它重新计算同一批 token 的概率，用来判断概率被改大还是改小。</p>
             <div class="prob-stack">
-              <div class="prob-row"><strong>也没关系</strong><span>0.11</span></div>
-              <div class="prob-row"><strong>换新</strong><span>0.13</span></div>
+              <div class="prob-row"><strong>也</strong><span>0.11</span></div>
+              <div class="prob-row"><strong>换</strong><span>0.13</span></div>
             </div>
           </div>
         </div>
         <div class="token-walkthrough" data-stage="3" aria-label="单 token 手算 policy loss">
           <div class="walkthrough-head">
             <span class="tag amber">手算一个 token</span>
-            <h3>用 R1 里的 “也没关系” 完整走一遍 token loss</h3>
+            <h3>用 R1 里的单个 token “也” 完整走一遍 token loss</h3>
             <p>下面不单独背概念，而是在每一步计算里解释它为什么出现。最终表格只是把同一套步骤复制到 R1 的所有 response token 上。</p>
           </div>
           <div class="selected-token-strip" aria-label="被选中的 response token">
-            <span class="token prompt-token">[客户问题]</span>
-            <span class="token prompt-token">客服A/B</span>
-            <span class="token response-token">包装</span>
-            <span class="token response-token">不在</span>
-            <span class="token response-token selected-token">也没关系</span>
-            <span class="token response-token">支持</span>
-            <span class="token response-token">换新</span>
-            <span class="token response-token">&lt;answer&gt;[[B]]&lt;/answer&gt;</span>
+            <span class="token prompt-token prompt-context">prompt 条件区：客户问题、客服 A/B、输出格式要求，mask=0</span>
+            <span class="token response-token">包</span>
+            <span class="token response-token">装</span>
+            <span class="token response-token">不</span>
+            <span class="token response-token">在</span>
+            <span class="token response-token selected-token">也</span>
+            <span class="token response-token">没</span>
+            <span class="token response-token">关</span>
+            <span class="token response-token">系</span>
+            <span class="token response-token">支</span>
+            <span class="token response-token">持</span>
+            <span class="token response-token">换</span>
+            <span class="token response-token">新</span>
+            <span class="token response-token">B</span>
             <span class="token-note">选中这个 response token 做手算</span>
           </div>
           <div class="calc-flow">
@@ -1208,7 +1227,7 @@ else:
               <span>1</span>
               <div>
                 <h3>先确认它会进入 loss</h3>
-                <div class="formula">mask_t = 1，因为 “也没关系” 是 response token</div>
+                <div class="formula">mask_t = 1，因为 “也” 是 response token</div>
                 <p><strong>response mask</strong> 的作用是只训练模型生成的回答部分；prompt token 只是条件，不承担 policy loss。</p>
               </div>
             </div>
@@ -1225,7 +1244,7 @@ else:
               <div>
                 <h3>比较概率变化</h3>
                 <div class="formula">ratio_t = p_new / p_old = 0.11 / 0.08 = 1.38</div>
-                <p><strong>ratio_t</strong> 表示当前模型把这个 token 的概率放大了多少。1.38 说明它比采样时更倾向生成 “也没关系”。</p>
+                <p><strong>ratio_t</strong> 表示当前模型把这个 token 的概率放大了多少。1.38 说明它比采样时更倾向生成 “也”。</p>
               </div>
             </div>
             <div class="calc-step">
@@ -1504,12 +1523,19 @@ else:
       }
     ];
     const tokenProbabilityLedger = [
-      { token: "包装", oldProb: 0.18, newProb: 0.21 },
-      { token: "不在", oldProb: 0.12, newProb: 0.14 },
-      { token: "也没关系", oldProb: 0.08, newProb: 0.11 },
-      { token: "支持", oldProb: 0.16, newProb: 0.15 },
-      { token: "换新", oldProb: 0.10, newProb: 0.13 },
-      { token: "<answer>[[B]]</answer>", oldProb: 0.42, newProb: 0.48 }
+      { token: "包", oldProb: 0.18, newProb: 0.21 },
+      { token: "装", oldProb: 0.17, newProb: 0.18 },
+      { token: "不", oldProb: 0.12, newProb: 0.14 },
+      { token: "在", oldProb: 0.11, newProb: 0.13 },
+      { token: "也", oldProb: 0.08, newProb: 0.11 },
+      { token: "没", oldProb: 0.09, newProb: 0.10 },
+      { token: "关", oldProb: 0.07, newProb: 0.08 },
+      { token: "系", oldProb: 0.07, newProb: 0.09 },
+      { token: "支", oldProb: 0.16, newProb: 0.15 },
+      { token: "持", oldProb: 0.15, newProb: 0.16 },
+      { token: "换", oldProb: 0.10, newProb: 0.13 },
+      { token: "新", oldProb: 0.09, newProb: 0.12 },
+      { token: "B", oldProb: 0.42, newProb: 0.48 }
     ];
 
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
