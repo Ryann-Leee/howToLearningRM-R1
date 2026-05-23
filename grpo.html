@@ -1,0 +1,1794 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GRPO 渐进详解：从一组 Rollout 算到 Loss</title>
+  <style>
+    :root {
+      --ink: #1d2433;
+      --muted: #5c6678;
+      --line: #d8dee9;
+      --paper: #fbfaf7;
+      --panel: #ffffff;
+      --soft: #f3f7f4;
+      --blue: #2f6fbd;
+      --green: #2f855a;
+      --red: #b83232;
+      --amber: #b7791f;
+      --teal: #247f7f;
+      --violet: #6b46c1;
+      --shadow: 0 10px 30px rgba(29, 36, 51, 0.08);
+      --radius: 8px;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-snap-type: y proximity;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 15px;
+      line-height: 1.62;
+    }
+
+    a { color: inherit; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 286px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      border-right: 1px solid var(--line);
+      background: var(--soft);
+      overflow: auto;
+    }
+
+    .brand {
+      display: grid;
+      gap: 7px;
+      margin-bottom: 24px;
+    }
+
+    .brand strong { font-size: 1.08rem; }
+
+    .brand span {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    nav {
+      display: grid;
+      gap: 8px;
+    }
+
+    nav a,
+    .text-link {
+      display: block;
+      padding: 8px 9px;
+      border-radius: 6px;
+      color: #2f3a4c;
+      text-decoration: none;
+      font-size: 0.87rem;
+    }
+
+    nav a:hover,
+    nav a:focus,
+    .text-link:hover,
+    .text-link:focus {
+      background: #ffffff;
+      outline: 1px solid #cbd6cd;
+    }
+
+    main { min-width: 0; }
+
+    section {
+      position: relative;
+      min-height: 100vh;
+      padding: 48px clamp(18px, 4.5vw, 64px);
+      border-bottom: 1px solid var(--line);
+      scroll-snap-align: start;
+      scroll-snap-stop: normal;
+    }
+
+    .hero {
+      display: grid;
+      align-content: center;
+      gap: 22px;
+      background:
+        linear-gradient(90deg, rgba(251, 250, 247, 0.95), rgba(251, 250, 247, 0.70)),
+        repeating-linear-gradient(135deg, #eef4f8 0 18px, #f7f0e6 18px 36px);
+    }
+
+    .section-head {
+      max-width: 1040px;
+      margin-bottom: 22px;
+    }
+
+    .section-head p,
+    .lead {
+      color: #3f4b5e;
+      font-size: 0.98rem;
+    }
+
+    .lead {
+      max-width: 920px;
+      font-size: clamp(1rem, 1.8vw, 1.17rem);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.18;
+    }
+
+    h1 {
+      max-width: 1040px;
+      font-size: clamp(2rem, 4.8vw, 4.35rem);
+    }
+
+    h2 {
+      font-size: clamp(1.5rem, 2.8vw, 2.35rem);
+      margin-bottom: 10px;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      margin-bottom: 8px;
+    }
+
+    p { margin: 0; }
+
+    .eyebrow {
+      display: inline-flex;
+      width: fit-content;
+      gap: 8px;
+      align-items: center;
+      padding: 5px 9px;
+      border: 1px solid #cad5dc;
+      border-radius: 999px;
+      color: var(--teal);
+      background: #ffffff;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .stage-controls {
+      position: absolute;
+      top: 18px;
+      right: clamp(14px, 3vw, 32px);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      z-index: 2;
+    }
+
+    button,
+    input[type="range"] { font: inherit; }
+
+    button {
+      min-width: 42px;
+      min-height: 34px;
+      border: 1px solid #bdc8d6;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    button:hover,
+    button:focus {
+      border-color: var(--blue);
+      outline: 2px solid rgba(47, 111, 189, 0.18);
+    }
+
+    .small-button {
+      min-height: 30px;
+      padding: 5px 9px;
+      color: #35435a;
+      font-size: 0.82rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 15px;
+    }
+
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 17px;
+    }
+
+    .panel p,
+    .panel li { color: #455166; }
+
+    .callout {
+      padding: 15px;
+      border-left: 5px solid var(--teal);
+      border-radius: 6px;
+      background: #eef8f7;
+      color: #28474a;
+    }
+
+    .formula {
+      margin: 12px 0 0;
+      padding: 12px;
+      border: 1px solid #c8d7ee;
+      border-radius: 6px;
+      background: #f3f7fc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.89rem;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .code {
+      padding: 12px;
+      border-radius: 6px;
+      background: #202838;
+      color: #edf2f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.84rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    .raw-prompt-block {
+      max-height: 360px;
+      margin-top: 10px;
+      border: 1px solid #334155;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(108px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      min-height: 118px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    .step::after {
+      content: ">";
+      position: absolute;
+      top: 50%;
+      right: -12px;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .step:last-child::after { content: ""; }
+
+    .tag {
+      display: inline-block;
+      margin-bottom: 8px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #edf2f7;
+      color: #334155;
+      font-size: 0.74rem;
+      font-weight: 700;
+    }
+
+    .tag.blue { background: #e5efff; color: var(--blue); }
+    .tag.green { background: #e6f4ec; color: var(--green); }
+    .tag.red { background: #fde8e8; color: var(--red); }
+    .tag.amber { background: #fff3d6; color: var(--amber); }
+    .tag.violet { background: #eee8ff; color: var(--violet); }
+    .tag.teal { background: #e5f6f5; color: var(--teal); }
+
+    .prompt-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .prompt-breakdown {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .field-card {
+      display: grid;
+      gap: 8px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .group-visual {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .group-diagram,
+    .not-group {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .group-diagram {
+      display: grid;
+      gap: 13px;
+    }
+
+    .group-source {
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      border: 1px solid #b8cfee;
+      border-radius: 7px;
+      background: #f3f7fc;
+    }
+
+    .group-source strong,
+    .not-group strong {
+      color: #223047;
+    }
+
+    .rollout-cluster {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(46px, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .rollout-chip {
+      min-height: 54px;
+      padding: 7px 5px;
+      border: 1px solid #bfd2e8;
+      border-radius: 7px;
+      background: #f8fbff;
+      text-align: center;
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .rollout-chip span {
+      display: block;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .group-arrow {
+      color: var(--teal);
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .not-group {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      border-color: #efc5c5;
+      background: #fff7f7;
+    }
+
+    .prompt-stack {
+      display: grid;
+      gap: 7px;
+    }
+
+    .prompt-pill {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px dashed #d9a9a9;
+      border-radius: 7px;
+      background: #fff;
+      color: #5b2630;
+      font-size: 0.84rem;
+    }
+
+    .answer-pair {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .answer-strip {
+      margin-top: 14px;
+    }
+
+    .answer-card {
+      display: grid;
+      gap: 8px;
+      min-height: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .answer-card.winner {
+      border-color: #8ac7a1;
+      background: #eefaf2;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #edf4f1;
+      color: #233247;
+      font-size: 0.86rem;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .compact-table td,
+    .compact-table th { padding: 9px 10px; }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.88rem;
+    }
+
+    .good-text { color: var(--green); font-weight: 800; }
+    .bad-text { color: var(--red); font-weight: 800; }
+
+    .ledger-id {
+      display: inline-grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      background: #edf2f7;
+      font-weight: 800;
+    }
+
+    .ledger-id.good { background: #e6f4ec; color: var(--green); }
+    .ledger-id.bad { background: #fde8e8; color: var(--red); }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 1.08rem;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .bar-list {
+      display: grid;
+      gap: 9px;
+      margin-top: 10px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr) 74px;
+      gap: 10px;
+      align-items: center;
+      font-size: 0.9rem;
+    }
+
+    .bar-track {
+      height: 15px;
+      border-radius: 999px;
+      background: #edf2f7;
+      overflow: hidden;
+      border: 1px solid #d8dee9;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--green);
+      transition: width 0.45s ease, background 0.25s ease;
+    }
+
+    .token-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .token {
+      padding: 7px 9px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.83rem;
+    }
+
+    .token.prompt-token {
+      color: #697587;
+      background: #f3f5f8;
+    }
+
+    .token.response-token {
+      border-color: #9bd2b1;
+      background: #eefaf2;
+    }
+
+    .token.pad-token {
+      color: #8791a1;
+      background: #f6f6f6;
+      border-style: dashed;
+    }
+
+    .loss-summary {
+      display: grid;
+      grid-template-columns: minmax(180px, 0.75fr) minmax(0, 1.25fr);
+      gap: 14px;
+      align-items: stretch;
+      margin-top: 16px;
+    }
+
+    .policy-comparison-visual {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr 1fr;
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .policy-card,
+    .response-path-card {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .policy-card.old {
+      border-color: #c8d7ee;
+      background: #f5f8fd;
+    }
+
+    .policy-card.new {
+      border-color: #9bd2b1;
+      background: #eefaf2;
+    }
+
+    .response-path-card {
+      display: grid;
+      gap: 10px;
+      background: #fffdf7;
+      border-color: #ecd8a8;
+    }
+
+    .prob-stack {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .prob-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 64px;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid #dbe4ef;
+      border-radius: 7px;
+      background: #fff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.83rem;
+    }
+
+    .token-walkthrough,
+    .calculation-ladder {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .token-walkthrough {
+      padding: 16px;
+      border: 1px solid #c8d7ee;
+      border-radius: var(--radius);
+      background: #f7fbff;
+      box-shadow: var(--shadow);
+    }
+
+    .walkthrough-head {
+      display: grid;
+      gap: 7px;
+    }
+
+    .selected-token-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid #dbe4ef;
+      border-radius: 7px;
+      background: #fff;
+    }
+
+    .selected-token {
+      border-color: #2f855a;
+      background: #dff6e8;
+      box-shadow: 0 0 0 3px rgba(47, 133, 90, 0.12);
+    }
+
+    .token-note {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .calc-flow {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .calc-step {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .calc-step span {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: #e5efff;
+      color: var(--blue);
+      font-weight: 800;
+    }
+
+    .calc-step h3 {
+      margin-bottom: 6px;
+      font-size: 0.98rem;
+    }
+
+    .calc-step .formula {
+      margin: 0 0 8px;
+      white-space: normal;
+    }
+
+    .token-ledger-panel {
+      margin-top: 16px;
+    }
+
+    .token-ledger-panel .table-wrap {
+      margin-top: 12px;
+    }
+
+    .big-number {
+      display: grid;
+      align-content: center;
+      min-height: 140px;
+      padding: 18px;
+      border: 1px solid #bcd0ea;
+      border-radius: var(--radius);
+      background: #f3f7fc;
+    }
+
+    .big-number strong {
+      color: var(--blue);
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1;
+    }
+
+    .note-list {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: #455166;
+    }
+
+    .noscript-fallback {
+      display: block;
+      padding: 24px clamp(18px, 4.5vw, 64px);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    footer {
+      padding: 28px clamp(18px, 4.5vw, 64px);
+      color: var(--muted);
+    }
+
+    .js [data-stage] {
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.35s ease, transform 0.35s ease, border-color 0.35s ease, background 0.35s ease;
+    }
+
+    .js [data-stage].is-revealed,
+    .js .is-complete [data-stage] {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .is-active {
+      background-image: linear-gradient(90deg, rgba(255,255,255,0), rgba(47,111,189,0.035));
+    }
+
+    .is-highlighted {
+      border-color: #86aee0 !important;
+      box-shadow: 0 0 0 3px rgba(47, 111, 189, 0.12), var(--shadow);
+    }
+
+    .is-muted {
+      opacity: 0.58;
+      filter: saturate(0.8);
+    }
+
+    .is-complete .bar-fill {
+      transition-duration: 0.2s;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+      }
+
+      .js [data-stage] {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow { grid-template-columns: 1fr; }
+      .step::after {
+        content: "v";
+        top: auto;
+        right: 50%;
+        bottom: -15px;
+        transform: translateX(50%);
+      }
+      .two,
+      .three,
+      .group-visual,
+      .prompt-breakdown,
+      .policy-comparison-visual,
+      .calc-flow,
+      .answer-pair,
+      .metric-grid,
+      .loss-summary { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 680px) {
+      section {
+        min-height: 100svh;
+        padding: 54px 15px 34px;
+      }
+      .hero { min-height: 100svh; }
+      nav,
+      .bar-row { grid-template-columns: 1fr; }
+      .stage-controls {
+        top: 10px;
+        right: 10px;
+      }
+      table { min-width: 700px; }
+    }
+  </style>
+</head>
+<body>
+  <noscript>
+    <div class="noscript-fallback">
+      <h2>无脚本静态账本</h2>
+      <p>本页的动画需要 JavaScript；关闭脚本时，可以直接阅读这份完整算例：同一道客服偏好题的 winner 是 model_b，7 条 rollout 的 reward 为 [1, -1, 1, -1, 1, -1, 1]，mean=0.14，std=0.99，判对 advantage≈0.87，判错/格式错 advantage≈-1.15。再用 ratio=exp(new_logprob-old_logprob)、clip_ratio=0.2 计算每条 clipped objective，policy_loss=-objective，最后对 7 条 rollout 求平均得到 group policy loss。</p>
+      <div class="table-wrap" style="margin-top:14px">
+        <table class="compact-table" aria-label="无脚本 rollout loss 账本">
+          <thead>
+            <tr>
+              <th>Rollout</th>
+              <th>answer</th>
+              <th>reward</th>
+              <th>advantage</th>
+              <th>old/new logprob</th>
+              <th>ratio</th>
+              <th>policy loss</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>R1</td><td>B</td><td>+1</td><td>0.87</td><td>-12.00 / -11.85</td><td>1.16</td><td>-1.01</td></tr>
+            <tr><td>R2</td><td>A</td><td>-1</td><td>-1.15</td><td>-10.90 / -10.60</td><td>1.35</td><td>1.56</td></tr>
+            <tr><td>R3</td><td>B</td><td>+1</td><td>0.87</td><td>-11.40 / -11.15</td><td>1.28</td><td>-1.04</td></tr>
+            <tr><td>R4</td><td>格式错</td><td>-1</td><td>-1.15</td><td>-9.80 / -10.15</td><td>0.70</td><td>0.92</td></tr>
+            <tr><td>R5</td><td>B</td><td>+1</td><td>0.87</td><td>-13.10 / -13.05</td><td>1.05</td><td>-0.91</td></tr>
+            <tr><td>R6</td><td>A</td><td>-1</td><td>-1.15</td><td>-12.70 / -12.78</td><td>0.92</td><td>1.07</td></tr>
+            <tr><td>R7</td><td>B</td><td>+1</td><td>0.87</td><td>-10.20 / -10.02</td><td>1.20</td><td>-1.04</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </noscript>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <strong>GRPO 渐进详解</strong>
+        <span>从一组 rollout 逐步算出 policy loss。</span>
+      </div>
+      <nav aria-label="页面导航">
+        <a href="index.html">返回 PPO / GRPO 总览</a>
+        <a href="#why">0. 总流程</a>
+        <a href="#prompt">1. Prompt 与标签</a>
+        <a href="#rollout">2. 7 条 Rollout</a>
+        <a href="#reward">3. Reward</a>
+        <a href="#advantage">4. Advantage</a>
+        <a href="#token-loss">5. Token Mask</a>
+        <a href="#ratio">6. Ratio / Clip</a>
+        <a href="#group-loss">7. Group Loss</a>
+        <a href="#rmr1">8. RM-R1 映射</a>
+        <a href="#appendix">9. 附录</a>
+      </nav>
+    </aside>
+
+    <main>
+      <section class="hero lesson-section" id="why">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="eyebrow" data-stage="1">GRPO, rollout to loss</div>
+        <h1 data-stage="2">从一组真实风格 rollout，手算 GRPO 如何得到一组 loss</h1>
+        <p class="lead" data-stage="3">
+          这页不再从抽象公式开始，而是从同一道客服评判题出发：模型采样 7 条回答，reward function 逐条打分，
+          GRPO 在组内标准化 reward，再用 advantage、logprob ratio 和 clip 算出每条 rollout 对 policy loss 的贡献。
+        </p>
+        <div class="flow" aria-label="GRPO 主流程">
+          <div class="step" data-stage="4">
+            <span class="tag blue">Prompt</span>
+            <h3>同一道题</h3>
+            <p>客户问题 + 客服 A/B + winner。</p>
+          </div>
+          <div class="step" data-stage="5">
+            <span class="tag amber">Rollout</span>
+            <h3>采样 7 条</h3>
+            <p>当前配置里 `n=7`。</p>
+          </div>
+          <div class="step" data-stage="6">
+            <span class="tag green">Reward</span>
+            <h3>判对 +1</h3>
+            <p>判错或格式错 -1。</p>
+          </div>
+          <div class="step" data-stage="7">
+            <span class="tag violet">Advantage</span>
+            <h3>组内标准化</h3>
+            <p>减均值，再除标准差。</p>
+          </div>
+          <div class="step" data-stage="8">
+            <span class="tag teal">Mask</span>
+            <h3>只算 response</h3>
+            <p>prompt 和 padding 不进 loss。</p>
+          </div>
+          <div class="step" data-stage="9">
+            <span class="tag red">Clip</span>
+            <h3>限制步幅</h3>
+            <p>ratio 超界时截断目标。</p>
+          </div>
+          <div class="step" data-stage="10">
+            <span class="tag blue">Loss</span>
+            <h3>取组平均</h3>
+            <p>得到这一组 rollout 的 policy loss。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="prompt">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>1. 先看一条训练样本的原貌</h2>
+          <p>
+            GRPO 的起点不是公式，而是一条带标准答案的数据。先看 JSON 原状，再拆出 prompt、winner，
+            最后再解释为什么同一个 prompt 下的多次采样会形成一个 group。
+          </p>
+        </div>
+        <div class="panel" data-stage="2">
+          <h3>这条样本喂给模型时的 prompt 原状</h3>
+          <pre class="code raw-prompt-block"><code>{
+  "context_messages": [
+    {
+      "role": "user",
+      "content": "[客户问题]\n9月18号在你家买的电动牙刷，用了半个月就充不进电了，包装扔了但有订单号：20240918****。我不想修，能直接换新或退款吗？具体怎么走流程，需要先寄回吗？\n\n[客服A的回答开始]\n您好，关于您反馈的电动牙刷问题，请先自行确认充电线、插座是否正常，并拍摄故障视频、序列号及订单号提交。无包装需走质量检测流程，寄回后3-5个工作日判定。符合政策的，按维修/换新/退款规则处理，请知悉并耐心等待。\n[客服A的回答结束]\n\n[客服B的回答开始]\n抱歉给您添麻烦了！包装不在也没关系，我们支持质量问题换新或退款。现在给您创建售后单，安排顺丰上门取件免运费。请发订单号、故障短视频和机身SN码。检测确认故障后可选择先行补发或原路退款，整体2-3个工作日完成。\n[客服B的回答结束]\n\n请将最终判定结果严格按照以下格式输出：\n若 客服A 更好，则输出：&lt;answer&gt;[[A]]&lt;/answer&gt;\n若 客服B 更好，则输出：&lt;answer&gt;[[B]]&lt;/answer&gt;"
+    }
+  ],
+  "winner": "model_b"
+}</code></pre>
+        </div>
+        <div class="prompt-breakdown" data-stage="3">
+          <div class="field-card">
+            <span class="tag blue">context_messages[0].content</span>
+            <h3>这就是模型实际看到的 prompt</h3>
+            <p>它包含客户问题、客服 A、客服 B，以及“最终必须输出 A/B 标签”的格式要求。</p>
+          </div>
+          <div class="field-card">
+            <span class="tag green">winner</span>
+            <h3>winner = model_b</h3>
+            <p>这不是直接喂给模型的答案，而是 reward function 用来判断 rollout 是否判对的标准。</p>
+          </div>
+        </div>
+        <div class="answer-pair answer-strip" data-stage="4">
+          <div class="answer-card">
+            <strong>客服 A</strong>
+            <p>先自行确认充电线、插座是否正常，拍摄故障视频、序列号及订单号提交。无包装需走质量检测流程，寄回后 3-5 个工作日判定。</p>
+          </div>
+          <div class="answer-card winner">
+            <strong>客服 B</strong>
+            <p>包装不在也没关系，支持质量问题换新或退款。创建售后单，安排顺丰上门取件免运费。发订单号、故障短视频和机身 SN 码，检测后可先行补发或原路退款。</p>
+          </div>
+        </div>
+        <div class="group-visual" data-stage="5" aria-label="GRPO group 图解">
+          <div class="group-diagram">
+            <div class="group-source">
+              <span class="tag blue">一个 Prompt</span>
+              <strong>同一道客户问题 + 客服 A/B + 输出格式要求</strong>
+              <p>同一个输入被当前 policy 采样多次。</p>
+            </div>
+            <div class="group-arrow">同一个 prompt -&gt; 7 条 rollout -&gt; 这 7 条才组成一个 GRPO group</div>
+            <div class="rollout-cluster" aria-label="同一个 prompt 的七条 rollout">
+              <div class="rollout-chip">R1<span>判 B</span></div>
+              <div class="rollout-chip">R2<span>判 A</span></div>
+              <div class="rollout-chip">R3<span>判 B</span></div>
+              <div class="rollout-chip">R4<span>格式错</span></div>
+              <div class="rollout-chip">R5<span>判 B</span></div>
+              <div class="rollout-chip">R6<span>判 A</span></div>
+              <div class="rollout-chip">R7<span>判 B</span></div>
+            </div>
+          </div>
+          <div class="not-group">
+            <span class="tag red">不是 group：不同 prompt 混在一起</span>
+            <strong>不同题目的 reward 不能直接相互比较</strong>
+            <div class="prompt-stack">
+              <div class="prompt-pill"><span>Prompt A</span><span>牙刷售后</span></div>
+              <div class="prompt-pill"><span>Prompt B</span><span>物流延误</span></div>
+              <div class="prompt-pill"><span>Prompt C</span><span>会员权益</span></div>
+            </div>
+            <p>一个训练 batch 可以包含很多 prompt；GRPO 会在每个 prompt 内部分别成组，再分别算组内均值、标准差和 advantage。</p>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:18px" data-stage="6">
+          Group 在 GRPO 里指同一个 prompt 下采样出来的一组 rollout。它不是整个 batch，也不能把不同题目的回答混在一起比较；
+          因为只有题目相同，reward 的高低才代表“这几条回答谁相对更好”。
+        </div>
+      </section>
+
+      <section class="lesson-section" id="rollout">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>2. 同一个 Prompt 采样 7 条 Rollout</h2>
+          <p>每条 rollout 都有推理文本和最终判断。为了把计算看清楚，这里只展示“推理摘要 + 最终 answer”。</p>
+        </div>
+        <div class="table-wrap" data-stage="2">
+          <table class="compact-table" aria-label="7 条 rollout">
+            <thead>
+              <tr>
+                <th>Rollout</th>
+                <th>推理摘要</th>
+                <th>最终 answer</th>
+                <th>是否匹配 winner</th>
+              </tr>
+            </thead>
+            <tbody id="rolloutRows"></tbody>
+          </table>
+        </div>
+        <div class="callout" style="margin-top:18px" data-stage="9">
+          当前项目的默认配置是 `actor_rollout_ref.rollout.n: 7`，所以同一个 prompt 会扩展出 7 条 response，再进入 reward 和 GRPO 计算。
+        </div>
+      </section>
+
+      <section class="lesson-section" id="reward">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>3. Reward：判对 +1，判错或格式错 -1</h2>
+          <p>当前 reward function 只看最后一段里是否包含正确的 `<answer>[[A/B]]</answer>`，并排除同时出现 A/B 的歧义输出。</p>
+        </div>
+        <div class="grid two">
+          <div class="panel" data-stage="2">
+            <h3>规则</h3>
+            <div class="code">if winner == "model_b" and "&lt;answer&gt;[[B]]&lt;/answer&gt;" in output:
+    reward = +1
+else:
+    reward = -1</div>
+          </div>
+          <div class="panel" data-stage="3">
+            <h3>这组结果</h3>
+            <div class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:0">
+              <div class="metric"><strong id="correctCount">0</strong><span>判对</span></div>
+              <div class="metric"><strong id="wrongCount">0</strong><span>判错/格式错</span></div>
+              <div class="metric"><strong id="rewardSum">0</strong><span>reward 总和</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-top:16px" data-stage="4">
+          <table class="compact-table" aria-label="reward 账本">
+            <thead>
+              <tr>
+                <th>Rollout</th>
+                <th>answer</th>
+                <th>判定</th>
+                <th>reward</th>
+              </tr>
+            </thead>
+            <tbody id="rewardRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="advantage">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>4. Advantage：把 raw reward 变成组内相对优势</h2>
+          <p>GRPO 不训练 value model。它直接把同一组 reward 标准化，得到每条 rollout 的相对优势。</p>
+        </div>
+        <div class="grid two">
+          <div class="panel" data-stage="2">
+            <h3>先算组内统计量</h3>
+            <div class="formula">mean = sum(reward) / 7</div>
+            <div class="formula">std = sqrt(mean((reward - mean)^2))</div>
+            <div class="metric-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+              <div class="metric"><strong id="meanReward">0.00</strong><span>mean(r_group)</span></div>
+              <div class="metric"><strong id="stdReward">0.00</strong><span>std(r_group)</span></div>
+            </div>
+          </div>
+          <div class="panel" data-stage="3">
+            <h3>再算每条 advantage</h3>
+            <div class="formula">A_i = (r_i - mean(r_group)) / (std(r_group) + ε)</div>
+            <p style="margin-top:12px">判对的 rollout 比组平均高，所以 A 为正；判错或格式错比组平均低，所以 A 为负。</p>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:16px" data-stage="4">
+          <h3>7 条 advantage</h3>
+          <div class="bar-list" id="advantageBars"></div>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="token-loss">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>5. 从 response-level advantage 到每个 token 的概率权重</h2>
+          <p>
+            reward 和 advantage 是整条 response 级别的，但反传发生在每个生成 token 的概率上。
+            所以训练会把同一个 A_i 广播到 response token，再逐 token 比较 old policy 和 new policy。
+          </p>
+        </div>
+        <div class="policy-comparison-visual" data-stage="2" aria-label="old policy new policy token 概率图解">
+          <div class="policy-card old">
+            <span class="tag blue">Old policy</span>
+            <h3>old policy 是采样 rollout 时的模型快照</h3>
+            <p>它负责生成这条 response，并记录当时每个 token 被采到的概率。</p>
+            <div class="prob-stack">
+              <div class="prob-row"><strong>也没关系</strong><span>0.08</span></div>
+              <div class="prob-row"><strong>换新</strong><span>0.10</span></div>
+            </div>
+          </div>
+          <div class="response-path-card">
+            <h3>同一条序列里，哪些 token 算 loss</h3>
+            <div class="token-row" aria-label="token mask 示例">
+              <span class="token prompt-token">[客户问题]</span>
+              <span class="token prompt-token">客服A/B</span>
+              <span class="token prompt-token">输出格式</span>
+              <span class="token response-token">包装不在</span>
+              <span class="token response-token">也没关系</span>
+              <span class="token response-token">换新</span>
+              <span class="token response-token">&lt;answer&gt;[[B]]&lt;/answer&gt;</span>
+              <span class="token pad-token">[PAD]</span>
+            </div>
+            <div class="formula">response-level A_i = 0.87 广播到每个绿色 response token</div>
+          </div>
+          <div class="policy-card new">
+            <span class="tag green">New policy</span>
+            <h3>new policy 是当前正在训练、正在反传的模型</h3>
+            <p>它重新计算同一批 token 的概率，用来判断概率被改大还是改小。</p>
+            <div class="prob-stack">
+              <div class="prob-row"><strong>也没关系</strong><span>0.11</span></div>
+              <div class="prob-row"><strong>换新</strong><span>0.13</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="token-walkthrough" data-stage="3" aria-label="单 token 手算 policy loss">
+          <div class="walkthrough-head">
+            <span class="tag amber">手算一个 token</span>
+            <h3>用 R1 里的 “也没关系” 完整走一遍 token loss</h3>
+            <p>下面不单独背概念，而是在每一步计算里解释它为什么出现。最终表格只是把同一套步骤复制到 R1 的所有 response token 上。</p>
+          </div>
+          <div class="selected-token-strip" aria-label="被选中的 response token">
+            <span class="token prompt-token">[客户问题]</span>
+            <span class="token prompt-token">客服A/B</span>
+            <span class="token response-token">包装</span>
+            <span class="token response-token">不在</span>
+            <span class="token response-token selected-token">也没关系</span>
+            <span class="token response-token">支持</span>
+            <span class="token response-token">换新</span>
+            <span class="token response-token">&lt;answer&gt;[[B]]&lt;/answer&gt;</span>
+            <span class="token-note">选中这个 response token 做手算</span>
+          </div>
+          <div class="calc-flow">
+            <div class="calc-step">
+              <span>1</span>
+              <div>
+                <h3>先确认它会进入 loss</h3>
+                <div class="formula">mask_t = 1，因为 “也没关系” 是 response token</div>
+                <p><strong>response mask</strong> 的作用是只训练模型生成的回答部分；prompt token 只是条件，不承担 policy loss。</p>
+              </div>
+            </div>
+            <div class="calc-step">
+              <span>2</span>
+              <div>
+                <h3>取 old/new policy 概率</h3>
+                <div class="formula">p_old = 0.08，p_new = 0.11</div>
+                <p><strong>old policy</strong> 是采样这条 rollout 时的模型快照；<strong>new policy</strong> 是当前正在更新的模型，对同一个 token 重新前向得到概率。</p>
+              </div>
+            </div>
+            <div class="calc-step">
+              <span>3</span>
+              <div>
+                <h3>比较概率变化</h3>
+                <div class="formula">ratio_t = p_new / p_old = 0.11 / 0.08 = 1.38</div>
+                <p><strong>ratio_t</strong> 表示当前模型把这个 token 的概率放大了多少。1.38 说明它比采样时更倾向生成 “也没关系”。</p>
+              </div>
+            </div>
+            <div class="calc-step">
+              <span>4</span>
+              <div>
+                <h3>限制单步更新幅度</h3>
+                <div class="formula">clipped ratio = clip(1.38, 0.8, 1.2) = 1.20</div>
+                <p><strong>clipped ratio</strong> 把 ratio_t 限在 [0.8, 1.2]，防止一次更新把概率改得过猛。</p>
+              </div>
+            </div>
+            <div class="calc-step">
+              <span>5</span>
+              <div>
+                <h3>乘上这条 response 的 advantage</h3>
+                <div class="formula">A_i = 0.87；objective_t = min(1.38 × 0.87, 1.20 × 0.87) = 1.04</div>
+                <p><strong>A_i</strong> 是整条 R1 的 advantage，会广播到每个 response token。<strong>token objective</strong> 越大，越鼓励模型提高这条好 rollout 的对应 token 概率。</p>
+              </div>
+            </div>
+            <div class="calc-step">
+              <span>6</span>
+              <div>
+                <h3>把优化目标转成 loss</h3>
+                <div class="formula">token loss_t = - objective_t = -1.04</div>
+                <p><strong>token loss</strong> 取负号，是因为优化器最小化 loss；对正 advantage 的 token，负 loss 会推动 new policy 继续提高它的概率。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="panel token-ledger-panel" data-stage="4">
+          <h3>R1 完整 response token 计算表</h3>
+          <p>把刚才的 6 步复制到 R1 的每个 response token：同一个 A_i，不同 token 各自用自己的 old/new 概率得到 ratio、clip 后 objective 和 loss。</p>
+          <div class="table-wrap">
+            <table class="compact-table" aria-label="R1 完整 response token 概率和 loss 账本">
+              <thead>
+                <tr>
+                  <th>response token</th>
+                  <th>A_i</th>
+                  <th>old policy 概率</th>
+                  <th>new policy 概率</th>
+                  <th>ratio_t</th>
+                  <th>clipped ratio</th>
+                  <th>token objective</th>
+                  <th>token loss</th>
+                </tr>
+              </thead>
+              <tbody id="tokenProbabilityRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="loss-summary" data-stage="5">
+          <div class="big-number">
+            <span>R1 token 平均 policy loss</span>
+            <strong id="tokenPolicyLoss">0.00</strong>
+          </div>
+          <div class="panel">
+            <h3>rollout-level 再汇总</h3>
+            <p>这张表只展开 R1 的若干 response token。实现里会先在 response token 上求均值，得到 R1 的 rollout-level loss，再和 R2-R7 一起进入组内/批内平均。</p>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:18px" data-stage="6">
+          这就是为什么 GRPO 适合可验证任务，但 token 级 credit assignment 仍然比较粗：整条回答拿同一个 reward，
+          每个 response token 共享同一个 A_i，只是通过各自的 old/new 概率 ratio 产生不同的 loss 权重。
+        </div>
+      </section>
+
+      <section class="lesson-section" id="ratio">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>6. 从 token-level 账本汇总到 rollout-level 账本</h2>
+          <p>上一章展开了一条 rollout 内部的 token 计算。这一章回到 7 条 rollout：每条 rollout 都会做同样的 old/new policy 比较，再得到自己的 policy loss。</p>
+        </div>
+        <div class="grid two">
+          <div class="panel" data-stage="2">
+            <h3>response 级简写</h3>
+            <div class="formula">ratio_i = exp(logπ_new(response_i) - logπ_old(response_i))</div>
+            <div class="formula">objective_i = min(ratio_i * A_i, clip(ratio_i, 0.8, 1.2) * A_i)</div>
+            <div class="formula">policy_loss_i = -objective_i</div>
+          </div>
+          <div class="panel" data-stage="3">
+            <h3>这只是 token 级计算的压缩写法</h3>
+            <p>表里的 old/new logprob 可以理解为整条 response token logprob 的汇总。它保留了“和 old policy 比较、再用 A_i 加权、再 clip”的同一套逻辑。</p>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-top:16px" data-stage="4">
+          <table class="compact-table" aria-label="ratio clip loss 账本">
+            <thead>
+              <tr>
+                <th>Rollout</th>
+                <th>A_i</th>
+                <th>old logprob</th>
+                <th>new logprob</th>
+                <th>ratio</th>
+                <th>clipped</th>
+                <th>objective</th>
+                <th>policy loss</th>
+              </tr>
+            </thead>
+            <tbody id="lossRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="group-loss">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>7. Group Loss：一组 rollout 最后汇总成一个训练信号</h2>
+          <p>实际实现会在 token、micro batch、mini batch 上求均值。教学上可以先看 response 级别：把 7 条 rollout 的 policy loss 平均。</p>
+        </div>
+        <div class="loss-summary">
+          <div class="big-number" data-stage="2">
+            <span>group policy loss</span>
+            <strong id="groupLoss">0.00</strong>
+          </div>
+          <div class="panel" data-stage="3">
+            <h3>这一组的完整链路</h3>
+            <ol class="note-list">
+              <li>同题采样 7 条 response。</li>
+              <li>用规则 reward 判断最终答案是否正确。</li>
+              <li>在组内把 reward 标准化成 advantage。</li>
+              <li>用 old/new logprob 算 ratio，并用 0.2 clip 限制更新。</li>
+              <li>对每条 rollout 得到 policy loss，再做平均。</li>
+            </ol>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:18px" data-stage="4">
+          如果某条正确 rollout 的 probability 已经涨太快，clip 会让它少涨一点；如果错误 rollout 的 probability 被错误地涨高，loss 会强烈惩罚这个方向。
+        </div>
+      </section>
+
+      <section class="lesson-section" id="rmr1">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>8. 在 RM-R1 项目里，GRPO 对应什么</h2>
+          <p>当前项目把 Reasoning Reward Model 训练成一个生成式 judge：读客户问题和两个客服回答，推理后输出 A 或 B。</p>
+        </div>
+        <div class="flow" aria-label="RM-R1 GRPO 映射">
+          <div class="step" data-stage="2">
+            <span class="tag blue">数据</span>
+            <h3>context_messages</h3>
+            <p>客户问题 + 客服 A/B + 输出格式要求。</p>
+          </div>
+          <div class="step" data-stage="3">
+            <span class="tag amber">标签</span>
+            <h3>winner</h3>
+            <p>`model_a` 或 `model_b`。</p>
+          </div>
+          <div class="step" data-stage="4">
+            <span class="tag green">Rollout</span>
+            <h3>n = 7</h3>
+            <p>同题多次采样。</p>
+          </div>
+          <div class="step" data-stage="5">
+            <span class="tag violet">Reward</span>
+            <h3>lm_as_judge</h3>
+            <p>判对 +1，否则 -1。</p>
+          </div>
+          <div class="step" data-stage="6">
+            <span class="tag red">GRPO</span>
+            <h3>adv_estimator</h3>
+            <p>`adv_estimator: grpo`。</p>
+          </div>
+          <div class="step" data-stage="7">
+            <span class="tag teal">Clip</span>
+            <h3>clip_ratio</h3>
+            <p>`clip_ratio: 0.2`。</p>
+          </div>
+          <div class="step" data-stage="8">
+            <span class="tag blue">模型</span>
+            <h3>Judge 更准</h3>
+            <p>提高正确判断路径的概率。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="lesson-section" id="appendix">
+        <div class="stage-controls" aria-label="章节控制">
+          <button class="small-button" type="button" data-action="replay">重播本章</button>
+          <button class="small-button" type="button" data-action="expand">全部展开</button>
+        </div>
+        <div class="section-head" data-stage="1">
+          <h2>9. 附录：KL、Entropy、Mini-batch 放在哪里</h2>
+          <p>主线已经讲完 policy loss。真实训练还会有一些工程项，它们不改变“rollout 到 loss”的主路径。</p>
+        </div>
+        <div class="grid three">
+          <div class="panel" data-stage="2">
+            <h3>Ref KL</h3>
+            <p>配置里 `use_kl_loss: True`、`kl_loss_coef: 0.001`。它约束当前 policy 不要离 reference policy 太远。</p>
+          </div>
+          <div class="panel" data-stage="3">
+            <h3>Entropy</h3>
+            <p>训练脚本覆盖为 `actor_rollout_ref.actor.entropy_coeff=0`，所以这条主线里不展开 entropy bonus。</p>
+          </div>
+          <div class="panel" data-stage="4">
+            <h3>Mini-batch</h3>
+            <p>`TRAIN_BS=32` 是 rollout prompt 批大小，`PPO_MINI_BS=8` 是更新批大小；实际 loss 会在更大的 batch 维度继续求均值。</p>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:18px" data-stage="5">
+          一句话：GRPO 用同题多解的相对优劣替代 value model baseline，最后仍然通过 masked logprob 的 policy loss 更新模型。
+        </div>
+      </section>
+
+      <footer>
+        <p>GRPO 渐进详解。页面为离线静态教学页，算例基于当前 RM-R1 项目的客服偏好任务格式。</p>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const clipEpsilon = 0.2;
+    const rolloutLedger = [
+      {
+        id: 1,
+        summary: "指出 B 更主动创建售后、上门取件并给出退款/换新路径。",
+        answer: "B",
+        reward: 1,
+        oldLogprob: -12.00,
+        newLogprob: -11.85
+      },
+      {
+        id: 2,
+        summary: "偏向 A 的保守检测流程，最终选 A。",
+        answer: "A",
+        reward: -1,
+        oldLogprob: -10.90,
+        newLogprob: -10.60
+      },
+      {
+        id: 3,
+        summary: "比较两边后认为 B 的时效和承担运费更完整。",
+        answer: "B",
+        reward: 1,
+        oldLogprob: -11.40,
+        newLogprob: -11.15
+      },
+      {
+        id: 4,
+        summary: "分析了售后流程，但最后没有输出合法 answer 标签。",
+        answer: "格式错",
+        reward: -1,
+        oldLogprob: -9.80,
+        newLogprob: -10.15
+      },
+      {
+        id: 5,
+        summary: "抓住包装缺失不影响质量售后，最终选 B。",
+        answer: "B",
+        reward: 1,
+        oldLogprob: -13.10,
+        newLogprob: -13.05
+      },
+      {
+        id: 6,
+        summary: "把需要寄回检测看成更稳妥，最终选 A。",
+        answer: "A",
+        reward: -1,
+        oldLogprob: -12.70,
+        newLogprob: -12.78
+      },
+      {
+        id: 7,
+        summary: "认为 B 同时解决流程、运费和时效焦虑，最终选 B。",
+        answer: "B",
+        reward: 1,
+        oldLogprob: -10.20,
+        newLogprob: -10.02
+      }
+    ];
+    const tokenProbabilityLedger = [
+      { token: "包装", oldProb: 0.18, newProb: 0.21 },
+      { token: "不在", oldProb: 0.12, newProb: 0.14 },
+      { token: "也没关系", oldProb: 0.08, newProb: 0.11 },
+      { token: "支持", oldProb: 0.16, newProb: 0.15 },
+      { token: "换新", oldProb: 0.10, newProb: 0.13 },
+      { token: "<answer>[[B]]</answer>", oldProb: 0.42, newProb: 0.48 }
+    ];
+
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const hasIntersectionObserver = "IntersectionObserver" in window;
+    document.documentElement.classList.add("js");
+
+    function mean(values) {
+      return values.reduce((sum, value) => sum + value, 0) / values.length;
+    }
+
+    function std(values, avg) {
+      const variance = values.reduce((sum, value) => sum + Math.pow(value - avg, 2), 0) / values.length;
+      return Math.sqrt(variance);
+    }
+
+    function format(value) {
+      return Number(value).toFixed(2);
+    }
+
+    function clip(value, epsilon) {
+      return Math.max(1 - epsilon, Math.min(1 + epsilon, value));
+    }
+
+    function enrichLedger() {
+      const rewards = rolloutLedger.map((item) => item.reward);
+      const avg = mean(rewards);
+      const sigma = std(rewards, avg) || 1;
+      rolloutLedger.forEach((item) => {
+        item.advantage = (item.reward - avg) / sigma;
+        item.ratio = Math.exp(item.newLogprob - item.oldLogprob);
+        item.clippedRatio = clip(item.ratio, clipEpsilon);
+        item.objective = Math.min(item.ratio * item.advantage, item.clippedRatio * item.advantage);
+        item.policyLoss = -item.objective;
+      });
+      return { avg, sigma };
+    }
+
+    const groupStats = enrichLedger();
+
+    function enrichTokenProbabilityLedger() {
+      const rolloutAdvantage = rolloutLedger[0].advantage;
+      tokenProbabilityLedger.forEach((item) => {
+        item.advantage = rolloutAdvantage;
+        item.ratio = item.newProb / item.oldProb;
+        item.clippedRatio = clip(item.ratio, clipEpsilon);
+        item.objective = Math.min(item.ratio * item.advantage, item.clippedRatio * item.advantage);
+        item.policyLoss = -item.objective;
+      });
+      return mean(tokenProbabilityLedger.map((item) => item.policyLoss));
+    }
+
+    const tokenPolicyLoss = enrichTokenProbabilityLedger();
+
+    function answerMarkup(item) {
+      if (item.answer === "格式错") {
+        return "<span class=\"bad-text\">格式错</span>";
+      }
+      const answer = `&lt;answer&gt;[[${item.answer}]]&lt;/answer&gt;`;
+      return item.reward > 0
+        ? `<span class="good-text mono">${answer}</span>`
+        : `<span class="bad-text mono">${answer}</span>`;
+    }
+
+    function rowStage(item, offset = 2) {
+      return `data-stage="${item.id + offset}"`;
+    }
+
+    function renderTables() {
+      const rolloutRows = document.getElementById("rolloutRows");
+      const rewardRows = document.getElementById("rewardRows");
+      const lossRows = document.getElementById("lossRows");
+
+      rolloutRows.innerHTML = rolloutLedger.map((item) => `
+        <tr ${rowStage(item)}>
+          <td><span class="ledger-id ${item.reward > 0 ? "good" : "bad"}">R${item.id}</span></td>
+          <td>${item.summary}</td>
+          <td>${answerMarkup(item)}</td>
+          <td>${item.reward > 0 ? "<span class=\"good-text\">匹配 winner</span>" : "<span class=\"bad-text\">不匹配</span>"}</td>
+        </tr>
+      `).join("");
+
+      rewardRows.innerHTML = rolloutLedger.map((item) => `
+        <tr ${rowStage(item, 4)}>
+          <td>Rollout ${item.id}</td>
+          <td>${answerMarkup(item)}</td>
+          <td>${item.reward > 0 ? "判对" : item.answer === "格式错" ? "格式错" : "判错"}</td>
+          <td class="${item.reward > 0 ? "good-text" : "bad-text"}">${item.reward > 0 ? "+1" : "-1"}</td>
+        </tr>
+      `).join("");
+
+      lossRows.innerHTML = rolloutLedger.map((item) => {
+        const clipped = Math.abs(item.ratio - item.clippedRatio) > 0.0001;
+        return `
+          <tr ${rowStage(item, 4)} class="${clipped ? "is-highlighted" : ""}">
+            <td>R${item.id}</td>
+            <td class="${item.advantage >= 0 ? "good-text" : "bad-text"}">${format(item.advantage)}</td>
+            <td class="mono">${format(item.oldLogprob)}</td>
+            <td class="mono">${format(item.newLogprob)}</td>
+            <td class="mono">${format(item.ratio)}</td>
+            <td class="mono">${format(item.clippedRatio)}${clipped ? " *" : ""}</td>
+            <td class="mono">${format(item.objective)}</td>
+            <td class="mono">${format(item.policyLoss)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderMetrics() {
+      const correct = rolloutLedger.filter((item) => item.reward > 0).length;
+      const wrong = rolloutLedger.length - correct;
+      const rewardSum = rolloutLedger.reduce((sum, item) => sum + item.reward, 0);
+      const groupLoss = mean(rolloutLedger.map((item) => item.policyLoss));
+
+      document.getElementById("correctCount").textContent = `${correct} / ${rolloutLedger.length}`;
+      document.getElementById("wrongCount").textContent = `${wrong} / ${rolloutLedger.length}`;
+      document.getElementById("rewardSum").textContent = rewardSum > 0 ? `+${rewardSum}` : String(rewardSum);
+      document.getElementById("meanReward").textContent = format(groupStats.avg);
+      document.getElementById("stdReward").textContent = format(groupStats.sigma);
+      document.getElementById("groupLoss").textContent = format(groupLoss);
+
+      const advantageBars = document.getElementById("advantageBars");
+      advantageBars.innerHTML = rolloutLedger.map((item) => {
+        const width = Math.min(100, Math.abs(item.advantage) * 56);
+        const tone = item.advantage >= 0 ? "var(--green)" : "var(--red)";
+        return `
+          <div class="bar-row" ${rowStage(item, 4)}>
+            <span>R${item.id}</span>
+            <div class="bar-track">
+              <div class="bar-fill" style="width:${width}%;background:${tone}"></div>
+            </div>
+            <strong class="${item.advantage >= 0 ? "good-text" : "bad-text"}">${format(item.advantage)}</strong>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderTokenProbabilityTable() {
+      const tokenProbabilityRows = document.getElementById("tokenProbabilityRows");
+      tokenProbabilityRows.innerHTML = tokenProbabilityLedger.map((item) => {
+        const clipped = Math.abs(item.ratio - item.clippedRatio) > 0.0001;
+        const tokenLabel = item.token.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        return `
+          <tr class="${clipped ? "is-highlighted" : ""}">
+            <td class="mono">${tokenLabel}</td>
+            <td class="good-text">${format(item.advantage)}</td>
+            <td class="mono">${format(item.oldProb)}</td>
+            <td class="mono">${format(item.newProb)}</td>
+            <td class="mono">${format(item.ratio)}</td>
+            <td class="mono">${format(item.clippedRatio)}${clipped ? " *" : ""}</td>
+            <td class="mono">${format(item.objective)}</td>
+            <td class="mono">${format(item.policyLoss)}</td>
+          </tr>
+        `;
+      }).join("");
+      document.getElementById("tokenPolicyLoss").textContent = format(tokenPolicyLoss);
+    }
+
+    function clearStageTimers(section) {
+      const timers = section._stageTimers || [];
+      timers.forEach((timer) => window.clearTimeout(timer));
+      section._stageTimers = [];
+    }
+
+    function revealSection(section, instant = false) {
+      clearStageTimers(section);
+      section.classList.add("is-active");
+      section.classList.remove("is-complete");
+
+      const stages = Array.from(section.querySelectorAll("[data-stage]"))
+        .sort((a, b) => Number(a.dataset.stage) - Number(b.dataset.stage));
+
+      stages.forEach((element) => {
+        element.classList.remove("is-revealed");
+      });
+
+      if (instant || prefersReducedMotion) {
+        stages.forEach((element) => element.classList.add("is-revealed"));
+        section.classList.add("is-complete");
+        return;
+      }
+
+      stages.forEach((element, index) => {
+        const timer = window.setTimeout(() => {
+          element.classList.add("is-revealed");
+          if (index === stages.length - 1) {
+            section.classList.add("is-complete");
+          }
+        }, index * 135);
+        section._stageTimers.push(timer);
+      });
+    }
+
+    function expandAll() {
+      document.querySelectorAll(".lesson-section").forEach((section) => revealSection(section, true));
+    }
+
+    function setupAnimation() {
+      const sections = Array.from(document.querySelectorAll(".lesson-section"));
+      let hashLockUntil = 0;
+
+      const getHashSection = () => {
+        if (!window.location.hash) return false;
+        const section = document.querySelector(window.location.hash);
+        if (!section || !section.classList.contains("lesson-section")) return false;
+        return section;
+      };
+
+      const revealHashTarget = () => {
+        const section = getHashSection();
+        if (!section) return false;
+        hashLockUntil = performance.now() + 1600;
+        document.querySelectorAll(".lesson-section.is-active").forEach((activeSection) => {
+          if (activeSection !== section) activeSection.classList.remove("is-active");
+        });
+        revealSection(section, true);
+        return true;
+      };
+
+      document.querySelectorAll("[data-action='replay']").forEach((button) => {
+        button.addEventListener("click", () => {
+          const section = button.closest(".lesson-section");
+          revealSection(section);
+        });
+      });
+
+      document.querySelectorAll("[data-action='expand']").forEach((button) => {
+        button.addEventListener("click", expandAll);
+      });
+
+      if (prefersReducedMotion || !hasIntersectionObserver) {
+        expandAll();
+        return;
+      }
+
+      const observer = new IntersectionObserver((entries) => {
+        const hashSection = getHashSection();
+        if (hashSection && performance.now() < hashLockUntil) {
+          const rect = hashSection.getBoundingClientRect();
+          if (rect.bottom > 0 && rect.top < window.innerHeight) {
+            document.querySelectorAll(".lesson-section.is-active").forEach((section) => {
+              if (section !== hashSection) section.classList.remove("is-active");
+            });
+            hashSection.classList.add("is-active");
+            return;
+          }
+        }
+
+        const visibleEntry = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visibleEntry) return;
+
+        document.querySelectorAll(".lesson-section.is-active").forEach((section) => {
+          if (section !== visibleEntry.target) section.classList.remove("is-active");
+        });
+        revealSection(visibleEntry.target);
+      }, { threshold: 0.42 });
+
+      sections.forEach((section) => observer.observe(section));
+      if (!revealHashTarget()) {
+        revealSection(sections[0]);
+      }
+      window.addEventListener("hashchange", () => {
+        window.setTimeout(revealHashTarget, 40);
+      });
+    }
+
+    renderTables();
+    renderMetrics();
+    renderTokenProbabilityTable();
+    setupAnimation();
+
+    window.__grpoLesson = {
+      rolloutLedger,
+      tokenProbabilityLedger,
+      groupStats,
+      groupPolicyLoss: mean(rolloutLedger.map((item) => item.policyLoss)),
+      tokenPolicyLoss
+    };
+  </script>
+</body>
+</html>
