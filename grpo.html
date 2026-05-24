@@ -362,6 +362,44 @@
       color: #223047;
     }
 
+    .source-note {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .real-sample-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .sample-card {
+      display: grid;
+      gap: 8px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .sample-card.wide {
+      grid-column: 1 / -1;
+    }
+
+    .rollout-output-card {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .answer-extract {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
     .rollout-cluster {
       display: grid;
       grid-template-columns: repeat(7, minmax(46px, 1fr));
@@ -839,6 +877,8 @@
       .two,
       .three,
       .group-visual,
+      .real-sample-grid,
+      .answer-extract,
       .prompt-breakdown,
       .policy-comparison-visual,
       .calc-flow,
@@ -1054,9 +1094,64 @@
         </div>
         <div class="section-head" data-stage="1">
           <h2>2. 同一个 Prompt 采样 7 条 Rollout</h2>
-          <p>每条 rollout 都有推理文本和最终判断。为了把计算看清楚，这里只展示“推理摘要 + 最终 answer”。</p>
+          <p>项目里确实有真实 query/answer 对。先看当前算例来自数据集的一行，再看一条 rollout 从大模型输出后传给 reward function 的原始字符串。</p>
         </div>
-        <div class="table-wrap" data-stage="2">
+        <div class="panel" data-stage="2">
+          <span class="tag green">真实训练样本</span>
+          <h3>来自 `rm_r1/dataset/mix_data/test_with_sys.jsonl` 第 1 行</h3>
+          <p class="source-note">这条样本的 `winner` 是 `model_b`，也就是客服 B 是标准答案。</p>
+          <div class="real-sample-grid" aria-label="真实 query answer 对">
+            <div class="sample-card wide">
+              <span class="tag blue">query / 客户问题</span>
+              <p>9 月 18 号买的电动牙刷，用了半个月充不进电；包装扔了但有订单号。不想修，想直接换新或退款，并询问流程和是否要先寄回。</p>
+            </div>
+            <div class="sample-card">
+              <span class="tag red">answer_a / 客服 A</span>
+              <p>先自行确认充电线、插座是否正常，拍摄故障视频、序列号及订单号提交；无包装需走质量检测流程，寄回后 3-5 个工作日判定。</p>
+            </div>
+            <div class="sample-card">
+              <span class="tag green">answer_b / 客服 B</span>
+              <p>包装不在也没关系，支持质量问题换新或退款；创建售后单，安排顺丰上门取件免运费，检测后可先行补发或原路退款。</p>
+            </div>
+          </div>
+        </div>
+        <div class="panel rollout-output-card" data-stage="3">
+          <span class="tag amber">单条 rollout 原始输出</span>
+          <h3>大模型 `generate` 后，reward function 看到的是这一整段字符串</h3>
+          <p class="source-note">项目中没有找到这条样本对应的已保存 rollout 日志；下面固定一条教学 rollout，保留训练时真实会检查的输出形态：正文推理 + 末尾 `<answer>...</answer>`。</p>
+          <pre class="code raw-prompt-block"><code>&lt;type&gt;Chat&lt;/type&gt;
+
+&lt;rubric&gt;
+评估这类售后回答时，优先看三点：
+1. 是否承认质量问题并给出换新或退款路径；
+2. 是否降低用户操作成本，例如上门取件、免运费、加急处理；
+3. 是否回答用户关心的包装丢失、是否先寄回、处理时效。
+&lt;justify&gt;用户明确不想维修，且已有订单号，所以好的客服回答应该主动解决，而不是只让用户等待检测流程。&lt;/justify&gt;
+&lt;/rubric&gt;
+
+&lt;eval&gt;
+客服 A 的回答要求用户先自行排查并走质量检测，虽然覆盖了材料提交，但没有正面缓解“包装已丢”和“想换新或退款”的焦虑，处理时效也偏保守。
+
+客服 B 明确说明包装不在也可以处理，直接给出换新或退款选项，并安排顺丰上门取件免运费，还说明需要订单号、故障短视频和 SN 码，最后给出 2-3 个工作日完成的预期。它更完整地回答了用户的流程、寄回和时效问题。
+&lt;/eval&gt;
+
+&lt;answer&gt;[[B]]&lt;/answer&gt;</code></pre>
+          <div class="answer-extract" aria-label="从 rollout 输出中抽取 reward 所需字段">
+            <div class="sample-card">
+              <span class="tag blue">solution_str</span>
+              <p>整段 rollout 原文都会传入 reward function。</p>
+            </div>
+            <div class="sample-card">
+              <span class="tag green">pred = 最后 80 字符</span>
+              <p>当前 reward 只在结尾附近找合法 answer 标签。</p>
+            </div>
+            <div class="sample-card">
+              <span class="tag green">抽取结果</span>
+              <p class="mono">&lt;answer&gt;[[B]]&lt;/answer&gt;，匹配 `winner=model_b`。</p>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap" data-stage="4">
           <table class="compact-table" aria-label="7 条 rollout">
             <thead>
               <tr>
@@ -1069,7 +1164,7 @@
             <tbody id="rolloutRows"></tbody>
           </table>
         </div>
-        <div class="callout" style="margin-top:18px" data-stage="9">
+        <div class="callout" style="margin-top:18px" data-stage="10">
           当前项目的默认配置是 `actor_rollout_ref.rollout.n: 7`，所以同一个 prompt 会扩展出 7 条 response，再进入 reward 和 GRPO 计算。
         </div>
       </section>
