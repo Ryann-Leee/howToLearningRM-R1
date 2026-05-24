@@ -776,6 +776,34 @@
       margin-top: 12px;
     }
 
+    .code-walkthrough {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .code-step-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .code-step {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .code-step .code {
+      margin: 0;
+      padding: 10px;
+      font-size: 0.78rem;
+    }
+
     .big-number {
       display: grid;
       align-content: center;
@@ -882,6 +910,7 @@
       .prompt-breakdown,
       .policy-comparison-visual,
       .calc-flow,
+      .code-step-grid,
       .answer-pair,
       .metric-grid,
       .loss-summary { grid-template-columns: 1fr; }
@@ -1368,7 +1397,93 @@ else:
             </div>
           </div>
         </div>
-        <div class="panel token-ledger-panel" data-stage="4">
+        <div class="panel code-walkthrough" data-stage="4">
+          <span class="tag violet">代码对齐真实训练</span>
+          <h3>TRL 风格 GRPO token loss：先逐行看这段代码在算什么</h3>
+          <p>
+            上面的手算只展开 policy surrogate。真实训练里还会把当前模型和 reference model 比较，
+            加一个 KL 惩罚项，避免 policy 为了拿 reward 一步漂得太远。下面函数是单个 token 的简化版；
+            实际 TRL/GRPO 训练会把这些量扩展成 batch × response_len 的张量，再乘 response mask 后求平均。
+          </p>
+          <div class="code-step-grid" aria-label="逐行解释 GRPO token loss 代码">
+            <div class="code-step">
+              <span class="tag blue">1. 输入都是 logprob</span>
+              <pre class="code"><code>logprob_theta = ln(0.6)
+logprob_old   = ln(0.5)
+logprob_ref   = ln(0.5)
+advantage     = 1.0</code></pre>
+              <p>训练代码通常直接拿 log probability，因为模型前向输出 logits 后会转成 token logprob；相除时用 log 差再 `exp`，数值更稳定。</p>
+            </div>
+            <div class="code-step">
+              <span class="tag green">2. old/new 概率比</span>
+              <pre class="code"><code>ratio = torch.exp(logprob_theta - logprob_old)</code></pre>
+              <p>这等价于 `exp(ln(0.6)-ln(0.5)) = 0.6/0.5 = 1.2`，意思是当前模型把这个 token 的概率提高到 old policy 的 1.2 倍。</p>
+            </div>
+            <div class="code-step">
+              <span class="tag amber">3. 两个 surrogate</span>
+              <pre class="code"><code>surr1 = ratio * advantage
+surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantage</code></pre>
+              <p>`surr1` 是不限制步幅的目标，`surr2` 是把 ratio 限在 `[0.8, 1.2]` 后的目标。它对应前面手算里的 clipped ratio。</p>
+            </div>
+            <div class="code-step">
+              <span class="tag red">4. 取更保守的目标</span>
+              <pre class="code"><code>policy_objective = torch.min(surr1, surr2)</code></pre>
+              <p>正 advantage 时，取较小值可以防止好 token 的概率被一次性抬太多；负 advantage 时，clip 同样限制更新幅度。</p>
+            </div>
+            <div class="code-step">
+              <span class="tag violet">5. ref KL 惩罚</span>
+              <pre class="code"><code>log_ratio_ref = logprob_theta - logprob_ref
+kl_penalty = torch.exp(log_ratio_ref) - log_ratio_ref - 1.0</code></pre>
+              <p>这里比较的是当前模型和 reference model。`exp(x)-x-1` 是 GRPO/DeepSeek Math 常用的低方差 KL 估计形式，用来惩罚离 ref 太远的 token。</p>
+            </div>
+            <div class="code-step">
+              <span class="tag teal">6. 组合并取负号</span>
+              <pre class="code"><code>token_loss = -(policy_objective - beta * kl_penalty)</code></pre>
+              <p>训练目标是“提高 clipped objective，同时扣掉 KL 惩罚”。PyTorch 优化器最小化 loss，所以最后取负号。</p>
+            </div>
+          </div>
+        </div>
+        <div class="panel code-walkthrough" data-stage="5">
+          <span class="tag blue">完整代码</span>
+          <h3>把逐行解释合起来，就是单 token 的 GRPO loss</h3>
+          <pre class="code"><code>import torch
+
+def compute_grpo_token_loss(logprob_theta, logprob_old, logprob_ref, advantage, beta=0.1, eps=0.2):
+    """
+    计算单个 Token 的 GRPO 损失
+    
+    参数:
+    logprob_theta: 当前模型在该 token 的 log 概率 (对应 ln(0.6))
+    logprob_old:   采样时旧模型在该 token 的 log 概率 (对应 ln(0.5))
+    logprob_ref:   参考模型在该 token 的 log 概率 (对应 ln(0.5))
+    advantage:     该 token 所在整个句子的组内相对优势 (对应 1.0)
+    """
+    
+    # 1. 计算概率比值 Ratio (利用指数转换 log 的差值)
+    # 等价于 exp(ln(0.6) - ln(0.5)) = 0.6 / 0.5 = 1.2
+    ratio = torch.exp(logprob_theta - logprob_old)
+    
+    # 2. 计算 Clipped Surrogate Objective
+    surr1 = ratio * advantage
+    surr2 = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * advantage
+    policy_objective = torch.min(surr1, surr2)
+    
+    # 3. 计算 KL 散度惩罚 (DeepSeek Math 里的无偏估计形式)
+    # log_ratio_ref = ln(0.6/0.5)
+    log_ratio_ref = logprob_theta - logprob_ref
+    kl_penalty = torch.exp(log_ratio_ref) - log_ratio_ref - 1.0
+    
+    # 4. 组合最终目标函数并取反 (因为 PyTorch 的优化器是最小化 Loss)
+    # 对应 -(1.2 - 0.1 * 0.018)
+    token_loss = -(policy_objective - beta * kl_penalty)
+    
+    return token_loss</code></pre>
+          <div class="callout">
+            这段代码的单 token 结果还不是最终 batch loss。真实训练会先对所有 response token 做同样计算，
+            用 response mask 排除 prompt/pad，再在 token、rollout、mini-batch 维度上求平均。
+          </div>
+        </div>
+        <div class="panel token-ledger-panel" data-stage="6">
           <h3>R1 完整 response token 计算表</h3>
           <p>把刚才的 6 步复制到 R1 的每个 response token：同一个 A_i，不同 token 各自用自己的 old/new 概率得到 ratio、clip 后 objective 和 loss。</p>
           <div class="table-wrap">
@@ -1389,7 +1504,7 @@ else:
             </table>
           </div>
         </div>
-        <div class="loss-summary" data-stage="5">
+        <div class="loss-summary" data-stage="7">
           <div class="big-number">
             <span>R1 token 平均 policy loss</span>
             <strong id="tokenPolicyLoss">0.00</strong>
@@ -1399,7 +1514,7 @@ else:
             <p>这张表只展开 R1 的若干 response token。实现里会先在 response token 上求均值，得到 R1 的 rollout-level loss，再和 R2-R7 一起进入组内/批内平均。</p>
           </div>
         </div>
-        <div class="callout" style="margin-top:18px" data-stage="6">
+        <div class="callout" style="margin-top:18px" data-stage="8">
           这就是为什么 GRPO 适合可验证任务，但 token 级 credit assignment 仍然比较粗：整条回答拿同一个 reward，
           每个 response token 共享同一个 A_i，只是通过各自的 old/new 概率 ratio 产生不同的 loss 权重。
         </div>
