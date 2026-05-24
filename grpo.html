@@ -635,6 +635,72 @@
       margin-top: 16px;
     }
 
+    .policy-primer {
+      display: grid;
+      gap: 12px;
+    }
+
+    .policy-triad {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .policy-node,
+    .policy-link-card {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .policy-node {
+      display: grid;
+      gap: 8px;
+    }
+
+    .policy-symbol {
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      font-size: 2rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .policy-node.old {
+      border-color: #c8d7ee;
+      background: #f5f8fd;
+    }
+
+    .policy-node.theta {
+      border-color: #9bd2b1;
+      background: #eefaf2;
+    }
+
+    .policy-node.ref {
+      border-color: #d3c6ef;
+      background: #f7f3ff;
+    }
+
+    .policy-link-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .policy-link-card {
+      display: grid;
+      gap: 8px;
+      background: #fffdf7;
+      border-color: #ecd8a8;
+    }
+
+    .policy-link-card .formula {
+      margin-top: 0;
+      white-space: normal;
+    }
+
     .policy-comparison-visual {
       display: grid;
       grid-template-columns: 1fr 1.1fr 1fr;
@@ -907,6 +973,8 @@
       .group-visual,
       .real-sample-grid,
       .answer-extract,
+      .policy-triad,
+      .policy-link-grid,
       .prompt-breakdown,
       .policy-comparison-visual,
       .calc-flow,
@@ -1282,7 +1350,46 @@ else:
             所以训练会把同一个 A_i 广播到 response token，再逐 token 比较 old policy 和 new policy。
           </p>
         </div>
-        <div class="policy-comparison-visual" data-stage="2" aria-label="old policy new policy token 概率图解">
+        <div class="policy-primer" data-stage="2" aria-label="pi old pi theta pi ref 前置知识图解">
+          <div class="walkthrough-head">
+            <span class="tag violet">前置知识：三份 policy</span>
+            <h3>先分清 `π_old`、`π_θ`、`π_ref`，后面的 ratio、clip、KL 才不会混</h3>
+            <p>GRPO 训练同一个 token 时会同时看三份模型概率：谁生成了 rollout，谁正在被更新，谁负责当参考锚点。</p>
+          </div>
+          <div class="policy-triad">
+            <div class="policy-node old">
+              <span class="tag blue">采样者</span>
+              <div class="policy-symbol">π_old</div>
+              <h3>生成 rollout 时的旧策略</h3>
+              <p>它已经固定，不参与反传。训练时保存它对每个 response token 的 `logprob_old`，作为“当时这条回答有多像 old policy”的基准。</p>
+            </div>
+            <div class="policy-node theta">
+              <span class="tag green">学习者</span>
+              <div class="policy-symbol">π_θ</div>
+              <h3>当前正在训练的 policy</h3>
+              <p>它会重新前向同一批 prompt + response token，得到 `logprob_theta`。梯度最终回到这份模型参数 θ。</p>
+            </div>
+            <div class="policy-node ref">
+              <span class="tag violet">锚点</span>
+              <div class="policy-symbol">π_ref</div>
+              <h3>reference policy</h3>
+              <p>它通常是训练开始时的模型副本，也不参与反传。KL 项用它约束 `π_θ` 不要为了 reward 偏离原模型太远。</p>
+            </div>
+          </div>
+          <div class="policy-link-grid">
+            <div class="policy-link-card">
+              <span class="tag amber">更新幅度</span>
+              <div class="formula">ratio_t = exp(logprob_theta - logprob_old) = π_θ(token_t) / π_old(token_t)</div>
+              <p>`π_old` 和 `π_θ` 负责回答“当前模型相对采样时，把这个 token 概率改大还是改小”。这条线进入 clip surrogate。</p>
+            </div>
+            <div class="policy-link-card">
+              <span class="tag red">参考约束</span>
+              <div class="formula">KL_t ≈ exp(logprob_theta - logprob_ref) - (logprob_theta - logprob_ref) - 1</div>
+              <p>`π_ref` 和 `π_θ` 负责回答“当前模型离参考模型有多远”。这条线进入 KL penalty。</p>
+            </div>
+          </div>
+        </div>
+        <div class="policy-comparison-visual" data-stage="3" aria-label="old policy new policy token 概率图解">
           <div class="policy-card old">
             <span class="tag blue">Old policy</span>
             <h3>old policy 是采样 rollout 时的模型快照</h3>
@@ -1323,7 +1430,7 @@ else:
             </div>
           </div>
         </div>
-        <div class="token-walkthrough" data-stage="3" aria-label="单 token 手算 policy loss">
+        <div class="token-walkthrough" data-stage="4" aria-label="单 token 手算 policy loss">
           <div class="walkthrough-head">
             <span class="tag amber">手算一个 token</span>
             <h3>用 R1 里的单个 token “也” 完整走一遍 token loss</h3>
@@ -1397,7 +1504,7 @@ else:
             </div>
           </div>
         </div>
-        <div class="panel code-walkthrough" data-stage="4">
+        <div class="panel code-walkthrough" data-stage="5">
           <span class="tag violet">代码对齐真实训练</span>
           <h3>TRL 风格 GRPO token loss：先逐行看这段代码在算什么</h3>
           <p>
@@ -1443,7 +1550,7 @@ kl_penalty = torch.exp(log_ratio_ref) - log_ratio_ref - 1.0</code></pre>
             </div>
           </div>
         </div>
-        <div class="panel code-walkthrough" data-stage="5">
+        <div class="panel code-walkthrough" data-stage="6">
           <span class="tag blue">完整代码</span>
           <h3>把逐行解释合起来，就是单 token 的 GRPO loss</h3>
           <pre class="code"><code>import torch
@@ -1483,7 +1590,7 @@ def compute_grpo_token_loss(logprob_theta, logprob_old, logprob_ref, advantage, 
             用 response mask 排除 prompt/pad，再在 token、rollout、mini-batch 维度上求平均。
           </div>
         </div>
-        <div class="panel token-ledger-panel" data-stage="6">
+        <div class="panel token-ledger-panel" data-stage="7">
           <h3>R1 完整 response token 计算表</h3>
           <p>把刚才的 6 步复制到 R1 的每个 response token：同一个 A_i，不同 token 各自用自己的 old/new 概率得到 ratio、clip 后 objective 和 loss。</p>
           <div class="table-wrap">
@@ -1504,7 +1611,7 @@ def compute_grpo_token_loss(logprob_theta, logprob_old, logprob_ref, advantage, 
             </table>
           </div>
         </div>
-        <div class="loss-summary" data-stage="7">
+        <div class="loss-summary" data-stage="8">
           <div class="big-number">
             <span>R1 token 平均 policy loss</span>
             <strong id="tokenPolicyLoss">0.00</strong>
@@ -1514,7 +1621,7 @@ def compute_grpo_token_loss(logprob_theta, logprob_old, logprob_ref, advantage, 
             <p>这张表只展开 R1 的若干 response token。实现里会先在 response token 上求均值，得到 R1 的 rollout-level loss，再和 R2-R7 一起进入组内/批内平均。</p>
           </div>
         </div>
-        <div class="callout" style="margin-top:18px" data-stage="8">
+        <div class="callout" style="margin-top:18px" data-stage="9">
           这就是为什么 GRPO 适合可验证任务，但 token 级 credit assignment 仍然比较粗：整条回答拿同一个 reward，
           每个 response token 共享同一个 A_i，只是通过各自的 old/new 概率 ratio 产生不同的 loss 权重。
         </div>
